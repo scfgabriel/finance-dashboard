@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>個人財務 Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+:root{--bg:#0f172a;--card:#111827;--line:#1f2937;--text:#e5e7eb;--muted:#9ca3af;--green:#22c55e;--red:#ef4444;--blue:#3b82f6;--amber:#f59e0b}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans TC",Arial,sans-serif}
+.wrap{max-width:1280px;margin:0 auto;padding:24px}
+h1{font-size:26px;margin:0 0 4px}
+.sub{color:var(--muted);margin:0 0 20px}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}
+.kpi-label{color:var(--muted);font-size:13px}
+.kpi-value{font-size:26px;font-weight:700;margin-top:6px}
+.kpi-sub{font-size:12px;color:var(--muted);margin-top:4px}
+.pos{color:var(--green)}.neg{color:var(--red)}
+.row{display:grid;grid-template-columns:1.2fr 1fr;gap:14px;margin-top:14px}
+.form-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
+label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+input,select,button{width:100%;padding:9px;border-radius:9px;border:1px solid var(--line);background:#0b1220;color:var(--text);font-size:14px}
+button{cursor:pointer;background:var(--blue);border:none;font-weight:600}
+button.secondary{background:#1f2937}
+.actions{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}
+.actions button{width:auto;padding:9px 14px}
+table{width:100%;border-collapse:collapse;font-size:13px;margin-top:10px}
+th,td{padding:8px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+th{color:var(--muted);font-weight:600}
+.chart-card{height:360px}
+canvas{max-height:300px}
+.filters{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:16px 0}
+@media(max-width:900px){.grid,.row,.form-grid,.filters{grid-template-columns:1fr}.chart-card{height:320px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>個人財務 Dashboard</h1>
+<p class="sub">每日輸入收入／支出，自動生成 KPI、類別分析、月度現金流與趨勢。資料會儲存於瀏覽器 localStorage。</p>
+
+<div class="grid">
+  <div class="card"><div class="kpi-label">本月收入</div><div id="kpiIncome" class="kpi-value pos">HK$0</div><div id="kpiIncomeSub" class="kpi-sub"></div></div>
+  <div class="card"><div class="kpi-label">本月支出</div><div id="kpiExpense" class="kpi-value neg">HK$0</div><div id="kpiExpenseSub" class="kpi-sub"></div></div>
+  <div class="card"><div class="kpi-label">本月淨現金流</div><div id="kpiNet" class="kpi-value">HK$0</div><div id="kpiNetSub" class="kpi-sub"></div></div>
+  <div class="card"><div class="kpi-label">本月儲蓄率</div><div id="kpiRate" class="kpi-value">0%</div><div id="kpiRateSub" class="kpi-sub"></div></div>
+</div>
+
+<div class="card" style="margin-top:14px">
+  <h3 style="margin:0 0 12px">新增交易</h3>
+  <div class="form-grid">
+    <div><label>日期</label><input id="date" type="date"></div>
+    <div><label>類型</label><select id="type"><option value="支出">支出</option><option value="收入">收入</option></select></div>
+    <div><label>類別</label><select id="category"></select></div>
+    <div><label>金額 HKD</label><input id="amount" type="number" step="0.01" min="0" placeholder="0.00"></div>
+    <div><label>支付方式</label><select id="method"><option>銀行轉帳</option><option>信用卡</option><option>八達通</option><option>現金</option><option>AlipayHK</option><option>PayMe</option><option>其他</option></select></div>
+    <div><label>項目／備註</label><input id="note" placeholder="例如：午餐、月薪"></div>
+  </div>
+  <div class="actions">
+    <button onclick="addTransaction()">新增交易</button>
+    <button class="secondary" onclick="exportCSV()">匯出 CSV</button>
+    <label class="secondary" style="background:#1f2937;border-radius:9px;padding:9px 14px;cursor:pointer">匯入 CSV<input type="file" id="csvFile" accept=".csv" style="display:none" onchange="importCSV(event)"></label>
+    <button class="secondary" onclick="loadDemo()">載入示範資料</button>
+    <button class="secondary" onclick="clearAll()">清空資料</button>
+  </div>
+</div>
+
+<div class="filters card" style="margin-top:14px">
+  <div><label>開始日期</label><input id="fromDate" type="date" onchange="render()"></div>
+  <div><label>結束日期</label><input id="toDate" type="date" onchange="render()"></div>
+  <div><label>類型</label><select id="filterType" onchange="render()"><option value="">全部</option><option>收入</option><option>支出</option></select></div>
+  <div><label>類別</label><select id="filterCategory" onchange="render()"><option value="">全部</option></select></div>
+</div>
+
+<div class="row">
+  <div class="card chart-card"><h3>每日收入 vs 支出</h3><canvas id="dailyChart"></canvas></div>
+  <div class="card chart-card"><h3>支出類別分布</h3><canvas id="categoryChart"></canvas></div>
+</div>
+
+<div class="row">
+  <div class="card chart-card"><h3>月度現金流</h3><canvas id="monthlyChart"></canvas></div>
+  <div class="card chart-card"><h3>累計淨現金流趨勢</h3><canvas id="trendChart"></canvas></div>
+</div>
+
+<div class="card" style="margin-top:14px">
+  <h3>最近交易</h3>
+  <div style="overflow:auto"><table><thead><tr><th>日期</th><th>類型</th><th>類別</th><th>項目</th><th>支付方式</th><th style="text-align:right">金額</th><th></th></tr></thead><tbody id="txBody"></tbody></table></div>
+</div>
+</div>
+
+<script>
+const incomeCats=["薪金","獎金","副業","投資收益","退款","其他收入"];
+const expenseCats=["住屋","餐飲","交通","日用品","娛樂","醫療","保險","訂閱","旅遊","教育","投資","其他"];
+let transactions=JSON.parse(localStorage.getItem("financeTx")||"[]");
+let charts={};
+const fmt=n=>"HK$"+Number(n||0).toLocaleString("en-HK",{maximumFractionDigits:2});
+const today=()=>new Date().toISOString().slice(0,10);
+
+function populateCategories(){
+  const c=document.getElementById("category"); c.innerHTML="";
+  const t=document.getElementById("type").value;
+  (t==="收入"?incomeCats:expenseCats).forEach(x=>{const o=document.createElement("option");o.value=x;o.textContent=x;c.appendChild(o)});
+  const f=document.getElementById("filterCategory"); const cur=f.value; f.innerHTML='<option value="">全部</option>';
+  [...new Set([...incomeCats,...expenseCats])].forEach(x=>{const o=document.createElement("option");o.value=x;o.textContent=x;f.appendChild(o)});
+  f.value=cur;
+}
+document.getElementById("type").addEventListener("change",populateCategories);
+document.getElementById("date").value=today();
+
+function save(){localStorage.setItem("financeTx",JSON.stringify(transactions))}
+function addTransaction(){
+  const d=document.getElementById("date").value,t=document.getElementById("type").value,c=document.getElementById("category").value,a=parseFloat(document.getElementById("amount").value),m=document.getElementById("method").value,n=document.getElementById("note").value;
+  if(!d||!c||!(a>0)){alert("請填妥日期、類別及正數金額");return}
+  transactions.push({date:d,type:t,category:c,amount:a,method:m,note:n});
+  transactions.sort((x,y)=>x.date.localeCompare(y.date)); save(); render();
+  document.getElementById("amount").value="";document.getElementById("note").value="";
+}
+function deleteTx(i){transactions.splice(i,1);save();render()}
+function clearAll(){if(confirm("確定清空所有交易資料？")){transactions=[];save();render()}}
+function exportCSV(){
+  const head="日期,類型,類別,金額,支付方式,項目\n";
+  const rows=transactions.map(t=>[t.date,t.type,t.category,t.amount,t.method,(t.note||"").replace(/,/g,"，")].join(",")).join("\n");
+  const blob=new Blob(["\ufeff"+head+rows],{type:"text/csv;charset=utf-8"});
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="personal_finance_transactions.csv";a.click();
+}
+function importCSV(e){
+  const file=e.target.files[0]; if(!file)return;
+  const reader=new FileReader();
+  reader.onload=()=>{const lines=reader.result.replace(/\r/g,"").split("\n").slice(1).filter(Boolean);
+    lines.forEach(line=>{const p=line.split(",");if(p.length>=5&&parseFloat(p[3])>0)transactions.push({date:p[0],type:p[1],category:p[2],amount:parseFloat(p[3]),method:p[4],note:p[5]||""})});
+    transactions.sort((x,y)=>x.date.localeCompare(y.date));save();render();};
+  reader.readAsText(file,"utf-8");
+}
+function loadDemo(){
+  const base=new Date(); const demo=[];
+  for(let i=5;i>=0;i--){const d=new Date(base.getFullYear(),base.getMonth()-i,1);
+    const ym=d.toISOString().slice(0,7);
+    demo.push({date:ym+"-01",type:"收入",category:"薪金",amount:28000,method:"銀行轉帳",note:"月薪"});
+    demo.push({date:ym+"-02",type:"支出",category:"住屋",amount:12000,method:"銀行轉帳",note:"租金"});
+    demo.push({date:ym+"-05",type:"支出",category:"餐飲",amount:3200,method:"信用卡",note:"餐飲"});
+    demo.push({date:ym+"-08",type:"支出",category:"交通",amount:850,method:"八達通",note:"交通"});
+    demo.push({date:ym+"-12",type:"支出",category:"娛樂",amount:1200,method:"信用卡",note:"娛樂"});
+    demo.push({date:ym+"-18",type:"支出",category:"日用品",amount:1500,method:"AlipayHK",note:"日用品"});
+    demo.push({date:ym+"-22",type:"支出",category:"訂閱",amount:320,method:"信用卡",note:"訂閱服務"});
+    demo.push({date:ym+"-25",type:"收入",category:"副業",amount:2500+i*300,method:"PayMe",note:"副業收入"});
+  }
+  transactions=demo;save();render();
+}
+function filtered(){
+  const f=document.getElementById("fromDate").value,t=document.getElementById("toDate").value,ty=document.getElementById("filterType").value,c=document.getElementById("filterCategory").value;
+  return transactions.filter(x=>(!f||x.date>=f)&&(!t||x.date<=t)&&(!ty||x.type===ty)&&(!c||x.category===c));
+}
+function destroy(k){if(charts[k])charts[k].destroy()}
+function makeChart(id,cfg){destroy(id);charts[id]=new Chart(document.getElementById(id),cfg)}
+function render(){
+  const tx=filtered();
+  const now=new Date().toISOString().slice(0,7);
+  const monthTx=tx.filter(x=>x.date.slice(0,7)===now);
+  const inc=monthTx.filter(x=>x.type==="收入").reduce((s,x)=>s+x.amount,0);
+  const exp=monthTx.filter(x=>x.type==="支出").reduce((s,x)=>s+x.amount,0);
+  const net=inc-exp, rate=inc>0?net/inc*100:0;
+  document.getElementById("kpiIncome").textContent=fmt(inc);
+  document.getElementById("kpiExpense").textContent=fmt(exp);
+  const netEl=document.getElementById("kpiNet");netEl.textContent=fmt(net);netEl.className="kpi-value "+(net>=0?"pos":"neg");
+  document.getElementById("kpiRate").textContent=rate.toFixed(1)+"%";
+  document.getElementById("kpiIncomeSub").textContent=monthTx.filter(x=>x.type==="收入").length+" 筆收入";
+  document.getElementById("kpiExpenseSub").textContent=monthTx.filter(x=>x.type==="支出").length+" 筆支出";
+  document.getElementById("kpiNetSub").textContent=net>=0?"正現金流":"負現金流";
+  document.getElementById("kpiRateSub").textContent="淨儲蓄 ÷ 收入";
+
+  const daily={}; tx.forEach(x=>{daily[x.date]??={income:0,expense:0};daily[x.date][x.type==="收入"?"income":"expense"]+=x.amount});
+  const days=Object.keys(daily).sort();
+  makeChart("dailyChart",{type:"bar",data:{labels:days,datasets:[{label:"收入",data:days.map(d=>daily[d].income),backgroundColor:"#22c55e"},{label:"支出",data:days.map(d=>daily[d].expense),backgroundColor:"#ef4444"}]},options:{responsive:true,maintainAspectRatio:false,scales:{y:{ticks:{callback:v=>"HK$"+v}}}}});
+
+  const cat={}; tx.filter(x=>x.type==="支出").forEach(x=>cat[x.category]=(cat[x.category]||0)+x.amount);
+  const cats=Object.keys(cat).sort((a,b)=>cat[b]-cat[a]);
+  makeChart("categoryChart",{type:"doughnut",data:{labels:cats,datasets:[{data:cats.map(c=>cat[c]),backgroundColor:["#3b82f6","#f59e0b","#22c55e","#ef4444","#8b5cf6","#06b6d4","#ec4899","#84cc16","#f97316","#14b8a6","#a855f7","#64748b"]}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:"right"},tooltip:{callbacks:{label:c=>c.label+": "+fmt(c.raw)}}}}});
+
+  const monthly={}; tx.forEach(x=>{monthly[x.date.slice(0,7)]??={income:0,expense:0};monthly[x.date.slice(0,7)][x.type==="收入"?"income":"expense"]+=x.amount});
+  const months=Object.keys(monthly).sort();
+  makeChart("monthlyChart",{type:"bar",data:{labels:months,datasets:[{label:"收入",data:months.map(m=>monthly[m].income),backgroundColor:"#22c55e"},{label:"支出",data:months.map(m=>monthly[m].expense),backgroundColor:"#ef4444"},{label:"淨現金流",type:"line",data:months.map(m=>monthly[m].income-monthly[m].expense),borderColor:"#3b82f6",backgroundColor:"#3b82f6",tension:.3,yAxisID:"y"}]},options:{responsive:true,maintainAspectRatio:false,scales:{y:{ticks:{callback:v=>"HK$"+v}}}}});
+
+  let cum=0; const cumData=months.map(m=>{cum+=monthly[m].income-monthly[m].expense;return cum});
+  makeChart("trendChart",{type:"line",data:{labels:months,datasets:[{label:"累計淨現金流",data:cumData,borderColor:"#f59e0b",backgroundColor:"rgba(245,158,11,.15)",fill:true,tension:.3}]},options:{responsive:true,maintainAspectRatio:false,scales:{y:{ticks:{callback:v=>"HK$"+v}}}}});
+
+  const body=document.getElementById("txBody"); body.innerHTML="";
+  [...tx].reverse().slice(0,50).forEach(t=>{const i=transactions.indexOf(t);
+    const tr=document.createElement("tr");
+    tr.innerHTML=`<td>${t.date}</td><td class="${t.type==="收入"?"pos":"neg"}">${t.type}</td><td>${t.category}</td><td>${t.note||""}</td><td>${t.method}</td><td style="text-align:right">${fmt(t.amount)}</td><td><button class="secondary" onclick="deleteTx(${i})">刪除</button></td>`;
+    body.appendChild(tr)});
+}
+populateCategories();render();
+</script>
+</body>
+</html>
